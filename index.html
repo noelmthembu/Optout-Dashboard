@@ -277,4 +277,42 @@ $('#mapCancel').onclick=()=>{$('#mapModal').style.display='none';$('#usersFile')
 $('#mapApply').onclick=()=>{let r=mapRows(),e=$('#mapErr'),err=r.iId<0?'Choose the column that holds the Participant ID.':r.iEm<0?'Choose the column that holds the email address.':r.iId===r.iEm?'Participant ID and email address must be different columns.':'';if(err){e.textContent=err;e.style.display='block';return}
 let nf=new File(['\uFEFF'+[r.header,...r.rows].map(x=>x.map(csvCell).join(',')).join('\r\n')],mapCtx.f.name,{type:'text/csv'});$('#mapModal').style.display='none';mapCtx=null;$('#usersFile').value='';$('#usersFile').onchange({target:{files:[nf],value:''}})};
 try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}catch(e){}
+/* Shared data file + cross-tab notice */
+(function(){
+const IGN=['qm_t','qm_savedAt'],own=k=>typeof k==='string'&&k.indexOf('qm')===0&&IGN.indexOf(k)<0;
+let fh=null,wt=0,msg='',warn=false,needPerm=false;
+const sI=Storage.prototype.setItem,rI=Storage.prototype.removeItem,cI=Storage.prototype.clear,api=!!(window.showSaveFilePicker&&window.showOpenFilePicker);
+const idb=()=>new Promise((res,rej)=>{let r=indexedDB.open('qmShared',1);r.onupgradeneeded=()=>r.result.createObjectStore('h');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
+const hGet=async()=>{try{let d=await idb();return await new Promise(res=>{let q=d.transaction('h').objectStore('h').get('fh');q.onsuccess=()=>res(q.result||null);q.onerror=()=>res(null)})}catch(e){return null}};
+const hSet=async v=>{try{let d=await idb();await new Promise(res=>{let t=d.transaction('h','readwrite'),o=t.objectStore('h');v?o.put(v,'fh'):o.delete('fh');t.oncomplete=res;t.onerror=res})}catch(e){}};
+const snap=()=>{let data={};for(let i=0;i<localStorage.length;i++){let k=localStorage.key(i);if(own(k))data[k]=localStorage.getItem(k)}return{app:'optout-dashboard',savedAt:+localStorage.getItem('qm_savedAt')||Date.now(),data}};
+const touch=()=>{sI.call(localStorage,'qm_savedAt',String(Date.now()));sched()};
+Storage.prototype.setItem=function(k,v){sI.call(this,k,v);if(this===localStorage&&own(k))touch()};
+Storage.prototype.removeItem=function(k){rI.call(this,k);if(this===localStorage&&own(k))touch()};
+Storage.prototype.clear=function(){cI.call(this);if(this===localStorage)touch()};
+function sched(){if(!fh)return;clearTimeout(wt);wt=setTimeout(write,1200)}
+async function write(){if(!fh)return;try{if((await fh.queryPermission({mode:'readwrite'}))!=='granted'){needPerm=true;ui('Reconnect to keep saving to the shared file.',true);return}let w=await fh.createWritable();await w.write(JSON.stringify(snap()));await w.close();ui('Saved to the shared file at '+new Date().toLocaleTimeString()+'.')}catch(e){ui('Could not save to the shared file: '+e.message,true)}}
+async function readFile(){let t=await(await fh.getFile()).text();if(!t.trim())return null;try{let j=JSON.parse(t);return j&&j.data?j:null}catch(e){return null}}
+function apply(j){Object.keys(snap().data).forEach(k=>rI.call(localStorage,k));Object.keys(j.data).forEach(k=>{if(own(k))sI.call(localStorage,k,j.data[k])});sI.call(localStorage,'qm_savedAt',String(j.savedAt));location.reload()}
+async function sync(manual){try{let j=await readFile(),local=+localStorage.getItem('qm_savedAt')||0,has=Object.keys(snap().data).length>0;
+if(j&&j.savedAt>local){if(!has||confirm('The shared file has newer saved data than this browser. Load it now? This replaces the data stored in this browser.')){apply(j);return}}
+else if(j&&j.savedAt<local&&manual&&!confirm('This browser has newer data than the shared file. Save this browser\'s data to the file?'))return;
+await write()}catch(e){ui('Could not read the shared file: '+e.message,true)}}
+async function link(create){try{if(create)fh=await showSaveFilePicker({suggestedName:'OptOut_Dashboard_Data.json',types:[{description:'Dashboard data',accept:{'application/json':['.json']}}]});else[fh]=await showOpenFilePicker({types:[{description:'Dashboard data',accept:{'application/json':['.json']}}]});
+if((await fh.requestPermission({mode:'readwrite'}))!=='granted'){fh=null;return}needPerm=false;await hSet(fh);await sync(true)}catch(e){if(e.name!=='AbortError')ui('Could not link the file: '+e.message,true)}}
+async function reconnect(){try{if((await fh.requestPermission({mode:'readwrite'}))==='granted'){needPerm=false;await sync(true)}}catch(e){ui(e.message,true)}}
+async function unlink(){fh=null;needPerm=false;await hSet(null);ui('')}
+function ui(m,w){if(m!==undefined){msg=m;warn=!!w}draw()}
+let box=document.createElement('div');box.id='syncBox';box.style.cssText='position:fixed;right:12px;bottom:12px;z-index:40;max-width:330px;background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 4px 14px rgba(15,23,42,.18);padding:10px 12px;font-size:12px;color:#334155';document.body.appendChild(box);
+let note=document.createElement('div');note.style.cssText='position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:70;background:#fff4cc;border:1px solid #e6c34a;border-radius:8px;padding:8px 12px;font-size:13px;display:none';note.innerHTML='Data was changed in another tab. <button class="btn" id="syncReload" style="padding:3px 10px;font-size:12px">Reload to see it</button>';document.body.appendChild(note);
+note.querySelector('#syncReload').onclick=()=>location.reload();
+window.addEventListener('storage',e=>{if(e.key===null||own(e.key))note.style.display='block'});
+function draw(){let b=(l,id)=>'<button class="btn secondary" id="'+id+'" style="padding:3px 9px;font-size:12px;margin:4px 4px 0 0">'+l+'</button>';
+if(!api){box.innerHTML='<b>Saved data</b><br>Your data is kept in this browser. To share it with other browsers or computers, use Chrome or Edge to link a shared data file.';return}
+box.innerHTML='<b>Shared data file</b> '+(fh?'<span style="color:#047857">linked</span>':'<span class="muted">not linked</span>')+'<div style="margin-top:3px;color:'+(warn?'#b42318':'#475569')+'">'+(msg||(fh?'Changes are saved to the file automatically.':'Link a file kept in OneDrive, SharePoint or a shared folder so other browsers and computers show the same history.'))+'</div>'+(fh?(needPerm?b('Reconnect','syncRe'):b('Load from file','syncRef'))+b('Unlink','syncUn'):b('Create data file','syncNew')+b('Open existing file','syncOpen'));
+let g=id=>box.querySelector('#'+id);if(g('syncNew'))g('syncNew').onclick=()=>link(true);if(g('syncOpen'))g('syncOpen').onclick=()=>link(false);if(g('syncRe'))g('syncRe').onclick=reconnect;if(g('syncRef'))g('syncRef').onclick=()=>sync(true);if(g('syncUn'))g('syncUn').onclick=unlink}
+draw();
+(async()=>{if(!api)return;fh=await hGet();if(!fh){draw();return}try{if((await fh.queryPermission({mode:'readwrite'}))==='granted')await sync(false);else{needPerm=true;ui('Click Reconnect to load and save the shared data file.',true)}}catch(e){ui(e.message,true)}draw()})();
+
+})();
 </script></body></html>
