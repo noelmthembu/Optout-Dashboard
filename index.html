@@ -276,4 +276,5 @@ document.querySelectorAll('#mapFields select').forEach(s=>s.onchange=mapRefresh)
 $('#mapCancel').onclick=()=>{$('#mapModal').style.display='none';$('#usersFile').value='';$('#usersStatus').textContent='Participant CSV not imported (mapping cancelled).';mapCtx=null};
 $('#mapApply').onclick=()=>{let r=mapRows(),e=$('#mapErr'),err=r.iId<0?'Choose the column that holds the Participant ID.':r.iEm<0?'Choose the column that holds the email address.':r.iId===r.iEm?'Participant ID and email address must be different columns.':'';if(err){e.textContent=err;e.style.display='block';return}
 let nf=new File(['\uFEFF'+[r.header,...r.rows].map(x=>x.map(csvCell).join(',')).join('\r\n')],mapCtx.f.name,{type:'text/csv'});$('#mapModal').style.display='none';mapCtx=null;$('#usersFile').value='';$('#usersFile').onchange({target:{files:[nf],value:''}})};
+try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}catch(e){}
 </script></body></html>
